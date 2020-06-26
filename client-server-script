@@ -4,15 +4,18 @@
 exec 2>&1
 test -e /etc/profile && . /etc/profile
 
+
 # Depending on how client-server-script is started, "/usr/local/bin" is not
 # always in the $PATH
 PATH="/usr/local/bin:$PATH"
 
+max_rb_attempts=1
 rb_exit_timeout=3
 rb_exit_abort=4
 rb_exit_nonet=5
 default_timeout=240
-client_server_script_timeout=500
+client_server_script_timeout=720
+runtime_padding=120
 
 function exit_error() {
     local message=$1; shift
@@ -39,33 +42,57 @@ function do_roadblock() {
     fi
     local msgs_file="$roadblock_msgs_dir/$label.json"
     local cmd=""
+    local role="follower"
     cmd="$cmd $roadblock_bin --role=follower --redis-server=$roadblock_server"
     cmd="$cmd --leader-id=$leader --timeout=$timeout --redis-password=$roadblock_passwd"
-    cmd="$cmd --uuid=$roadblock_id:$label --follower-id=$cs_label --message-log=$msgs_file $extra"
+    cmd="$cmd --follower-id=$cs_label --message-log=$msgs_file $extra"
+    local uuid="$roadblock_id:$label"
+    printf "\n\n"
+    echo "Starting roadblock [`date`]"
+    echo "role: $role"
+    echo "uuid (without attempt ID embedded): $uuid"
+    echo "timeout: $timeout"
+
+    local attempts=0
+    local rc=99
     if [ "$use_roadblock" == "1" ]; then
-        echo "going to run this roadblock command: $cmd"
-        local output=`$cmd 2>&1`
-        local rc=$?
-        echo -e "$output"
-        if echo $output | grep -q -P -- '(Name\sor\sservice\snot\sknown)'; then
-            rc=$rb_exit_nonet
-            exit_error "Roadblock error: $output"
-        elif echo $output | grep -q -P -- '(Exiting\swith\sabort|Roadblock\sCompleted\swith\san\sAbort)'; then
-            rc=$rb_exit_abort
-        elif echo $output | grep -q -P -- '(The\sroadblock\shas\stimed\sout|ERROR:\sRoadblock\sfailed\swith\stimeout)'; then
-            rc=$rb_exit_timeout
-            exit_error "Roadblock error: $output"
-        fi
-        if [ $rc -gt 0 ]; then
-            echo "Roadblock exit code is non-zero: $rc"
-        fi
+        while [ $attempts -lt $max_rb_attempts -a $rc -ne 0 -a $rc -ne $rb_exit_abort ]; do
+            let attempts=$attempts+1
+            echo "attempt number: $attempts"
+            echo "uuid: $attempts:$uuid"
+            #echo "going to run this roadblock command: $cmd"
+            local output=`$cmd --uuid=$attempts:$uuid 2>&1`
+            rc=$?
+            echo "roadblock output BEGIN"
+            printf "%s" "$output"
+            echo "roadblock output END"
+            echo "roadblock exit code: $rc"
+            if echo $output | grep -q -P -- '(Name\sor\sservice\snot\sknown)'; then
+                rc=$rb_exit_nonet
+            elif echo $output | grep -q -P -- '(Exiting\swith\sabort|Roadblock\sCompleted\swith\san\sAbort)'; then
+                rc=$rb_exit_abort
+            elif echo $output | grep -q -P -- '(The\sroadblock\shas\stimed\sout|ERROR:\sRoadblock\sfailed\swith\stimeout)'; then
+                rc=$rb_exit_timeout
+            fi
+            if [ -f roadblock-messages ]; then
+                echo "messages from roadblock:"
+                cat roadblock-messages
+            fi
+        done
+
+        echo "total attempts: $attempts"
+        echo "Completed roadblock [`date`]"
+        printf "\n\n"
+
+    else
+        return 0
+    fi
+
+    if [ $rc -eq 0 -o $rc -eq $rb_exit_abort ]; then
         return $rc
+    else
+        exit_error "$rb_exit_msg"
     fi
-    if [ -f roadblock-messages ]; then
-        echo "messages from roadblock:"
-        cat roadblock-messages
-    fi
-    return 0
 }
 
 function scp_from_controller() {
@@ -249,7 +276,7 @@ run_dir="$base_run_dir/run"
 archives_dir="$run_dir/client-server/archives"
 
 if [ -z "$rickshaw_host" ]; then
-	exit_error "Exiting due to rickshaw host not being set"
+    exit_error "Exiting due to rickshaw host not being set"
 fi
 
 roadblock_bin="/usr/local/bin/roadblock.py"
@@ -450,9 +477,9 @@ if [ "$cs_type" == "client" -o "$cs_type" == "server" ]; then
                 echo "going to run this command to get the runtime: $runtime_cmd"
                 runtime=`$runtime_cmd`
                 if [ $? -eq 0  -a ! -z "$runtime" ]; then
-                    # Add 30 seconds to benchmark runtime to give
+                    # Add padding to benchmark runtime to give
                     # enough time for everyone to call roadblock
-                    let this_timeout=$runtime+30
+                    let this_timeout=$runtime+$runtime_padding
                     user_json_file="`mktemp`"
                     echo "adding timeout message to $cs_tx_msgs_dir"
                     echo '{"recipient":{"type":"all","id":"all"},"user-object":{"timeout":"'$this_timeout'"}}' >"$cs_tx_msgs_dir/timeout"

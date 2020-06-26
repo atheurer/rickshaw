@@ -6,6 +6,7 @@
 #
 # Rickshaw will run a benhcmark for you.  Please see README.md for instructions.
 
+
 use strict;
 use warnings;
 use Cwd;
@@ -37,7 +38,7 @@ my $rb_bin = "/usr/local/bin/roadblock.py";
 my $messages_ref;
 my $default_rb_timeout = 240;
 my $endpoint_deploy_timeout = 360;
-my $client_server_script_timeout = 300;
+my $client_server_script_timeout = 720;
 my $endpoint_move_data_rb_timeout = 300;
 chomp (my $hostname = `hostname`);
 my $base_rb_leader_cmd = $rb_bin . " --role=leader --redis-server=localhost" .
@@ -71,6 +72,7 @@ my $run_schema_file = $rickshaw_project_dir . "/schema/run.json";
 my $roadblock_exit_timeout = 3;
 my $roadblock_exit_abort = 4;
 my $roadblock_exit_nofile = 5;
+my $max_rb_attempts = 1;
 
 sub usage {
     print "\nusage:\n\n";
@@ -88,43 +90,64 @@ sub usage {
 
 sub roadblock_leader {
     if ($use_roadblock) {
+        my $attempts = 0;
+        my $rc = 99;
         my $label = shift;
         my $timeout = shift;
+        my $role = "leader";
+        my $uuid = $run{'run-id'} . ":" . $label;
         # save $_[0] for by ref later to store json ref
         my $follower_param = "";
         for (my $i=1; $i < scalar @_; $i++) {
             $follower_param .= " --followers=" . $_[$i];
         }
         my $msgs_file = $roadblock_msgs_dir . "/" . $label . ".json";
-        printf "Running roadblock for: %s\n", $label;
-        my $cmd = $base_rb_leader_cmd .
-                  " --leader-id=controller" .
-                  " --uuid=" . $run{'run-id'} . ":" . $label .
-                  " --timeout=" . $timeout .
-                  " --message-log=" . $msgs_file .
-                  $follower_param;
-        debug_log(sprintf "roadblock leader command:%s\n", $cmd);
-        my $output = `$cmd`;
-        my $rc = $? & 127;
-        debug_log($output);
-        debug_log(sprintf "roadblock exit code: %d\n", $rc);
-        # Becasue roadblock leader does not exit with right code
-        if ( my $g_output = grep(/(Exiting\swith\sabort|Roadblock\sCompleted\swith\san\sAbort)/, $output) ) {
-            printf "Found:\n%s\n", $g_output;
-            printf "%s\n", $output;
-            $rc = $roadblock_exit_abort;
+        my $date = `date`;
+        chomp $date;
+        printf "\n\nStarting roadblock [%s]\n", $date;
+        printf "role: %s\n", $role;
+        printf "uuid (without attempt ID embedded): %s\n", $uuid;
+        printf "timeout: %s\n", $timeout;
+        while ($attempts < $max_rb_attempts and $rc != 0 and $rc != $roadblock_exit_abort) {
+            $attempts++;
+            my $this_uuid = $attempts . ":" . $uuid;
+            printf "attempt number: %d\n", $attempts;
+            printf "uuid: %s\n", $this_uuid;
+            my $cmd = $base_rb_leader_cmd .
+                    " --leader-id=controller" .
+                    " --uuid=" . $this_uuid .
+                    " --timeout=" . $timeout .
+                    " --message-log=" . $msgs_file .
+                    $follower_param;
+            debug_log(sprintf "roadblock leader command:%s\n", $cmd);
+            my $output = `$cmd`;
+            $rc = $? & 127;
+            printf "roadblock output BEGIN\n";
+            printf "%s", $output;
+            printf "roadblock output END\n";
+            printf "roadblock exit code: %d\n", $rc;
+            # Becasue roadblock leader does not exit with right code
+            if ( my $g_output = grep(/(Exiting\swith\sabort|Roadblock\sCompleted\swith\san\sAbort)/, $output) ) {
+                #printf "Found:\n%s\n", $g_output;
+                #printf "%s", $output;
+                $rc = $roadblock_exit_abort;
+            }
+            if ( my $g_output = grep(/(The\sroadblock\shas\stimed\sout|ERROR:\sRoadblock\sfailed\swith\stimeout)/, $output) ) {
+                #printf "Found:\n%s\n", $g_output;
+                #printf "%s", $output;
+                $rc = $roadblock_exit_timeout;
+            }
+            if ( my $g_output = grep(/(Could\snot\sopen\smessage\slog)/, $output) ) {
+                #printf "Found:\n%s\n", $g_output;
+                #printf "%s", $output;
+                $rc = $roadblock_exit_nofile;
+            }
         }
-        if ( my $g_output = grep(/(The\sroadblock\shas\stimed\sout|ERROR:\sRoadblock\sfailed\swith\stimeout)/, $output) ) {
-            printf "Found:\n%s\n", $g_output;
-            printf "%s\n", $output;
-            $rc = $roadblock_exit_timeout;
-        }
-        if ( my $g_output = grep(/(Could\snot\sopen\smessage\slog)/, $output) ) {
-            printf "Found:\n%s\n", $g_output;
-            printf "%s\n", $output;
-            $rc = $roadblock_exit_nofile;
-        }
-        printf "Completed roadblock for: %s, return code %d\n", $label, $rc;
+        printf "total attempts: %d\n", $attempts;
+
+        $date = `date`;
+        chomp $date;
+        printf "Completed roadblock [%s]\n\n\n", $date;
         $_[0] = get_json_file($msgs_file);
         return $rc;
     } else {
@@ -171,8 +194,9 @@ sub put_json_file {
         debug_log(sprintf "Going to validate schema with [%s]\n", $schema_filename);
         my @errors = $jv->validate($json_ref);
         if (scalar @errors >  0) {
-            print "Validation errors when writing %s with schema %s:\n" . Dumper \@errors,
+            printf "Validation errors when writing %s with schema %s:\n",
                   $filename, $schema_filename;
+            print Dumper \@errors;
             exit 1;
         }
     }
@@ -587,8 +611,8 @@ foreach my $tool_entry (@tools_params) {
     my $this_tool_config = $run{'tools-dir'} . "/" . $tool_name . "/rickshaw.json";
     my $json_ref = get_json_file($this_tool_config, $tool_schema_file);
     if (! exists $$json_ref{'tool'} or $$json_ref{'tool'} ne $tool_name) {
-        printf "In the following tool config, found in %s, the value for 'tool'";
-        printf "does not match the tool name, '%s'\n", $this_tool_config, $tool_name;
+        printf "In the following tool config, found in %s, the value for key \"tool\" ", $this_tool_config;
+        printf "does not match the tool name, '%s'\n", $tool_name;
         printf "Either correct the tool config, or remove this tool from your test\n";
         my $coder = JSON::XS->new->canonical->pretty;
         printf "%s", $coder->encode($json_ref);

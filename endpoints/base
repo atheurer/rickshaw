@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # vim: autoindent tabstop=4 shiftwidth=4 expandtab softtabstop=4 filetype=bash
 # -*- mode: sh; indent-tabs-mode: nil; sh-basic-offset: 4 -*-
-set -u
 
 # Shared init and functions for endpoints
 
@@ -9,9 +8,11 @@ echo "#params: $@"
 hostname=`hostname`
 rb_exit_timeout=3
 rb_exit_abort=4
+rb_exit_nonet=5
 default_timeout=240
+max_rb_attempts=1
 endpoint_deploy_timeout=360
-client_server_start_timeout=500
+client_server_start_timeout=720
 endpoint_move_data_timeout=300
 cs_rb_opts=""
 do_validate="0"
@@ -125,11 +126,9 @@ function addto_clients_servers() {
 }
 
 function echo_clients_servers() {
-    #if [ ${#clients[@]} -gt 0 ]; then
     if [ $num_clients -gt 0 ]; then
         echo "client ${!clients[@]}"
     fi
-    #if [ ${#servers[@]} -gt 0 ]; then
     if [ $num_servers -gt 0 ]; then
         echo "server ${!servers[@]}"
     fi
@@ -200,14 +199,16 @@ function do_roadblock() {
         echo "Not running roadblock"
         return 0
     fi
-    echo `date` "Starting roadblock"
+
+    printf "\n\n"
+    echo "Starting roadblock [`date`]"
     echo "role: $role"
     local uuid="$rb_id:$label"
-    echo "uuid: $uuid"
+    echo "uuid (without attempt ID embedded): $uuid"
     echo "timeout: $timeout"
     local msgs_file="$roadblock_msgs_dir/$label.json"
     local cmd="/usr/local/bin/roadblock.py"
-    cmd+=" --redis-server $rb_server --timeout $timeout --redis-password $rb_passwd --uuid $uuid --role=$role --message-log=$msgs_file"
+    cmd+=" --redis-server $rb_server --timeout $timeout --redis-password $rb_passwd --role=$role --message-log=$msgs_file"
     if [ "$role" == "follower" ]; then
         cmd+=" --leader-id controller --follower-id $endpoint_label"
     elif [ "$role" == "leader" ]; then
@@ -225,23 +226,39 @@ function do_roadblock() {
     else
         exit_error "Roadblock role \"$role\" invalid"
     fi
-    local output=`$cmd 2>&1`
-    local rc=$?
 
-    if echo $output | grep -q -P -- '(Exiting\swith\sabort|Roadblock\sCompleted\swith\san\sAbort)'; then
-        rc=$rb_exit_abort
+    local attempts=0
+    local rc=99
+    local output=""
+    while [ $attempts -lt $max_rb_attempts -a $rc -ne 0 -a $rc -ne $rb_exit_abort ]; do
+        echo "attempt number: $attempts"
+        echo "uuid: $attempts:$uuid"
+        let attempts=$attempts+1
+        output=`$cmd --uuid $attempts:$uuid 2>&1`
+        rc=$?
+        echo "roadblock output BEGIN"
+        printf "%s" "$output"
+        echo "roadblock output END"
+        echo "roadblock exit code: $rc"
+        if echo $output | grep -q -P -- '(Name\sor\sservice\snot\sknown)'; then
+            rc=$rb_exit_nonet
+        elif echo $output | grep -q -P -- '(Exiting\swith\sabort|Roadblock\sCompleted\swith\san\sAbort)'; then
+            rc=$rb_exit_abort
+        elif echo $output | grep -q -P -- '(The\sroadblock\shas\stimed\sout|ERROR:\sRoadblock\sfailed\swith\stimeout)'; then
+            rc=$rb_exit_timeout
+        fi
+        #if [ $rc -gt 0 ]; then
+            #echo "Roadblock exit code is non-zero: $rc"
+        #fi
+    done
+    echo "total attempts: $attempts"
+    echo "Completed roadblock [`date`]"
+    printf "\n\n"
+    if [ $rc -ne 0 -a $rc -ne $rb_exit_abort ]; then
+        exit_error "roadblock failed"
+    else
+        return $rc
     fi
-    if echo $output | grep -q -P -- '(The\sroadblock\shas\stimed\sout|ERROR:\sRoadblock\sfailed\swith\stimeout)'; then
-        exit_error "$output"
-    fi
-    if [ $rc -gt 0 ]; then
-        echo "Roadblock exit code is non-zero: $rc"
-        echo $output
-    fi
-    echo `date` "Completed roadblock for $uuid"
-    echo "output:"
-    echo "$output"
-    return $rc
 }
 
 function process_prebench_roadblocks() {

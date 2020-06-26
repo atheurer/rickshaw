@@ -103,24 +103,27 @@ function process_k8s_opts() {
                 # "nodeSelector": {
                 #    "kubernetes.io/hostname": "worker000"
                 # }
+                #TODO: validate correct format of <client-server-label>:<path-to-file>
                 name=`echo $val | awk -F: '{print $1}'`
                 file=`echo $val | awk -F: '{print $2}'`
-                if [ -e $file ]; then
+                if [ ! -z "$file" -o -e $file ]; then
                     nodeSelector[$name]=`cat $file`
                 else
                     exit_error "Could not find file $file"
                 fi
                 ;;
             securityContext)
-                if [ -e $val ]; then
+                if [ ! -z "$val" -a -e $val ]; then
                     securityContext=`cat $val`
                 else
-                    exit_error "Could not find securityContext file $securityContext"
+                    exit_error "Could not find securityContext file '$val'"
                 fi
                 ;;
             resources)
-                if [ -e $val ]; then
+                if [ ! -z "$val" -a -e "$val" ]; then
                     resources=`cat $val`
+                else
+                    exit_error "Could not find resources file '$val'"
                 fi
                 ;;
             *)
@@ -262,14 +265,14 @@ function create_pods() {
     count=1
     while [ ! -z "$1" ]; do
         local name="$1"; shift
-	echo "create_pods: working on [$name]"
-	local host=""
-	if [ "$type" == "master" -o "$type" == "worker" ]; then
-	    host="$name"
-	    echo "because this is a tool pod, changing name from $name to..."
-	    name="$type-$count"
-	    echo "$name"
-	fi
+    echo "create_pods: working on [$name]"
+    local host=""
+    if [ "$type" == "master" -o "$type" == "worker" ]; then
+        host="$name"
+        echo "because this is a tool pod, changing name from $name to..."
+        name="$type-$count"
+        echo "$name"
+    fi
         delete_pods "$name"
         echo build_pod_spec "$name" "$type" "$dir" "$host"
         build_pod_spec "$name" "$type" "$dir" "$host"
@@ -302,7 +305,7 @@ function verify_pods_running() {
     done
     local num_pods=${#unverified_pods[@]}
     local count=0
-    local max_attempts=12
+    local max_attempts=18
     local abort=0
     local num_nonzero_exit=0
     local max_nonzero_exit=3

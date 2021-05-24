@@ -35,6 +35,7 @@ use toolbox::logging;
 $toolbox::logging::debug = 0;
 
 my %result;
+my %resp_stats;
 my $base_run_dir;
 my %cdm = ( 'ver' => 'v5dev' );
 my $coder = JSON::XS->new->canonical;
@@ -158,9 +159,22 @@ sub http_request {
     my %req_header = ("Content-Type" => "application/json");
     debug_log(sprintf "Request: http://%s/%s\nbody: %s\n\n", $host, $req, $body);
     $client->request($method, $req, $body, \%req_header);
-    my $response = $client->responseContent();
-    debug_log(sprintf "Response:\n%s\n\n", $response);
-    return $response;
+    my $resp_json_str = $client->responseContent();
+    my $resp_ref = $coder->decode($resp_json_str);
+    my $result = $$resp_ref{'result'};
+    if (! exists $resp_stats{$result} or ! defined $resp_stats{$result}) {
+        $resp_stats{$result} = 1;
+    } else {
+        $resp_stats{$result}++;
+    }
+    if ($result ne 'created') {
+        print "Request: " . $req;
+        print "Body: " . $body;
+        print "Response: " . Dumper $resp_ref;
+    }
+    debug_log(sprintf "Response:\n%s\n\n", $resp_json_str);
+    #printf "Response:\n%s\n\n", $resp_json_str;
+    return $resp_json_str;
 }
 
 sub http_ndjson_request {
@@ -298,6 +312,9 @@ if (-e $tool_dir) {
                         push(@pids, $pid);
                     } else {
                         index_metrics($tool_dir . "/" . $tool_file, $collector, $num, \%run_doc);
+                        for my $result (keys %resp_stats) {
+                            printf "result: %s  count: %d\n", $result, $resp_stats{$result};
+                        }
                         exit;
                     }
                 }
@@ -480,3 +497,6 @@ if (exists $result{'iterations'}) {
     print "Indexing of benchmark data complete\n";
 } # if iterations
 print "Indexing to ES complete\n";
+for my $result (keys %resp_stats) {
+    printf "parent: result: [%s]  count: %d\n", $result, $resp_stats{$result};
+}

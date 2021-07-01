@@ -397,20 +397,21 @@ function collect_sysinfo() {
 function start_tools() {
     for this_tool_cmds in "$tool_start_cmds" "$tool_stop_cmds"; do
         if [ ! -e $this_tool_cmds ]; then
-            abort_error "Tool cmd file $this_tool_cmd was not found" $sync $leader
+            abort_error "start_tools(): tool cmd file $this_tool_cmd was not found" $sync $leader
         fi
     done
-    mkdir -p tool-data
+    mkdir -p tool-data || abort_error "Could not create tool-data dir in `/bin/pwd`" $sync $leader
     if [ "$disable_tools" == "1" ]; then
         echo "Not running tools because --disable-tools=1 was used"
     else
-        pushd tool-data >/dev/null
+        pushd tool-data >/dev/null || abort_error "Could not pushd to tool-data in `/bin/pwd`" $sync $leader
         while read -u 9 line; do
             tool_name=`echo $line | awk -F: '{print $1}'`
             tool_cmd=`echo $line | sed -e s/^$tool_name://`
-            /bin/mkdir -p $tool_name
-            pushd $tool_name >/dev/null
-            $tool_cmd
+            echo "start_tools(): starting $tool_name"
+            /bin/mkdir -p $tool_name || abort_error "start_tools(): could not create dir $tool_name in `/bin/pwd`" $sync $leader
+            pushd $tool_name >/dev/null || abort_error "start_tools(): could not pushd to $tool_name in `/bin/pwd`" $sync $leader
+            $tool_cmd || abort_error "start_tools(): tool start cmd [$tool_cmd] failed" $sync $leader
             popd >/dev/null
         done 9<"$tool_start_cmds"
         popd >/dev/null
@@ -733,17 +734,24 @@ function run_tests() {
 
 function stop_tools() {
     if [ "$disable_tools" == "1" ]; then
-        echo "Not running tools because --disable-tools=1 was used"
+        echo "stop_tools(): not running tools because --disable-tools=1 was used"
     else
-        pushd tool-data >/dev/null
+        if [ ! -f $tool_stop_cmds ]; then
+            abort_error "stop_tools(): could not find $tool_stop_cmds in `/bin/pwd`" $sync $leader
+        fi
+        pushd tool-data >/dev/null || abort_error "stop_tools(): could not pushd to ./tool-data in `/bin/pwd`" $sync $leader
         while read -u 9 line; do
             tool_name=`echo $line | awk -F: '{print $1}'`
             tool_cmd=`echo $line | sed -e s/^$tool_name://`
-            pushd $tool_name >/dev/null
-            $tool_cmd
+            echo "stop_tools(): stopping $tool_name" $sync $leader
+            pushd $tool_name >/dev/null || exit_error "stop_tools(): could not pushd to ./$tool_name" $sync $leader
+            $tool_cmd || echo "stop_tools(): tool stop cmd [$tool_cmd] failed"
             popd >/dev/null
         done 9<"$tool_stop_cmds"
         popd >/dev/null
+    fi
+    if [ "$cs_type" == "client" -a "$cs_id" == "1" ]; then
+        abort_error "stop_tools(): fault injection by client" $sync $leader
     fi
 }
 
@@ -774,11 +782,6 @@ if [ $abort -eq 0 -a $? -eq 0 ]; then
             if [ $? -eq 0 -a $abort -eq 0 ]; then # start-tools rb passed
                 sync=$sync_prefix-start-tests
 
-                #if [ "$cs_label" == "worker-1" ]; then
-                    #abort_error "Fault injection from client-1 before $sync" $sync $leader
-                #fi
-                #echo "finished with fault injection"
-
                 start_tools
                 if [ $abort -eq 0 ]; then do_roadblock $sync $leader $default_timeout; fi
                 if [ $abort -eq 0 -a $? -eq 0 ]; then # start-tests rb passed
@@ -786,14 +789,22 @@ if [ $abort -eq 0 -a $? -eq 0 ]; then
                 fi
                 do_roadblock $sync_prefix-stop-tests $leader $default_timeout
                 do_roadblock $sync_prefix-stop-tools $leader $default_timeout
+                sync=$sync_prefix-send-data
                 stop_tools
             fi
         fi
-        do_roadblock $sync_prefix-send-data $leader $default_timeout
+        if [ $abort -eq 0 ]; then
+            do_roadblock $sync_prefix-send-data $leader $default_timeout
+        else
+            abort=0
+        fi
         send_data
     fi
-    echo "right before script-stop roadblock"
-    do_roadblock $sync_prefix-script-stop $leader $default_timeout
+    if [ $abort -eq 0 ]; then
+        do_roadblock $sync_prefix-script-stop $leader $default_timeout
+    else
+        abort=0
+    fi
     popd >/dev/null
 fi
 echo -e "\nAll client/server scripts are finished"

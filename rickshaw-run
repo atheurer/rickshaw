@@ -1495,9 +1495,9 @@ sub organize_run_data() {
         }
     }
     rmdir($tmp_data_dir);
+    printf "Compressing any remaining uncompressed files\n";
+    system("find . -type f | grep -v \.xz\$");
 }
-
-
 
 process_cmdline();
 validate_controller_env();

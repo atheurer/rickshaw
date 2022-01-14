@@ -15,6 +15,7 @@ rb_exit_input=2
 default_timeout=240
 max_rb_attempts=""
 endpoint_deploy_timeout=360
+postprocess_tools_timeout=600
 client_server_script_start_timeout=720
 endpoint_move_data_timeout=300
 cs_rb_opts=""
@@ -587,8 +588,13 @@ function process_roadblocks() {
                     break
                 elif [ $a_rb -eq 0 -a $b_rb -eq 0 ]; then # neither aborted, advance
                     echo "both collector and client-server passed roadblock"
-                    collector_stop_syncs=("$stop_sync" ${collector_stop_syncs[*]})
-                    client_stop_syncs=("$stop_sync" ${client_stop_syncs[*]})
+                    if [ "$stop_sync" == "stop-tools" ]; then
+                        collector_stop_syncs=("stop-tools" "postprocess-tools" ${collector_stop_syncs[*]})
+                        client_stop_syncs=("stop-tools" "postprocess-tools" ${client_stop_syncs[*]})
+                    else
+                        collector_stop_syncs=("$stop_sync" ${collector_stop_syncs[*]})
+                        client_stop_syncs=("$stop_sync" ${client_stop_syncs[*]})
+                    fi
                 fi
             done
             echo "for loop done, collector_stop_syncs: [ ${collector_stop_syncs[*]} ]  client_stop_syncs: [ ${client_stop_syncs[*]} ]"
@@ -606,7 +612,12 @@ function process_roadblocks() {
             echo "about to process client-server stop syncs"
             for (( i=0; i<${#client_stop_syncs[*]}; i++ )); do
                 this_sync="${client_stop_syncs[$i]}"
-                do_roadblock "client-server-$this_sync" "follower" $client_server_script_start_timeout
+                if [ "$this_sync" == "postprocess-tools" ]; then
+                    this_timeout=$postprocess_tools_timeout
+                else
+                    this_timeout=$default_timeout
+                fi
+                do_roadblock "client-server-$this_sync" "follower" $this_timeout
             done
         else
             echo "deploy aborted, going directly to cleanup"

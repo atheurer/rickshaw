@@ -53,6 +53,7 @@ my $redis_passwd = "flubber"; # TODO: make this cmdline setting
 my $rb_bin = "/usr/local/bin/roadblock.py";
 my $messages_ref;
 my $default_rb_timeout = 240;
+my $pp_tools_timeout = 600;
 my $endpoint_deploy_timeout = 360;
 my $client_server_script_start_timeout = 720;
 my $endpoint_move_data_rb_timeout = 300;
@@ -1427,6 +1428,11 @@ sub build_tool_cmd {
     my $fh = shift;
     my $endpoint_type = shift;
     my $tool_name = $$tool_entry{'tool'};
+
+    # postprocessing is optional per tool
+    if ($start_stop eq "postprocess" and ! defined $tools_configs{$tool_name}{'collector'}{$start_stop}) {
+        return;
+    }
     # Assemble the arguments as a bash array in order to not get them scrambled later
     my $tool_cmd = $tool_name . ':declare -a ARGS=(';
     foreach my $tool_param (@{ $$tool_entry{'params'} }) {
@@ -1498,9 +1504,10 @@ sub prepare_bench_tool_engines() {
             }
         }
     }
-    # Now build all of the tool start and stop cmd files for each collector
+    # Now build all of the tool start, stop, and postprocess cmd files for each collector
+    # A collector is a osruntime that's neither a client or server
     for my $collector (keys %collectors) {
-        for my $start_stop ("start", "stop") {
+        for my $start_stop ("start", "stop", "postprocess") {
             my $collector_tool_cmds_dir = $tool_cmds_dir . "/" . $collector;
             -e $collector_tool_cmds_dir || make_path($collector_tool_cmds_dir) ||
                 die "[ERROR]Create collector directory failed: [" . $collector_tool_cmds_dir . "]\n";
@@ -1739,6 +1746,7 @@ sub process_roadblocks() {
                         # Finally step through shutdown, cleanup, and sending data back
                         roadblock_leader("client-server-stop-tests", $default_rb_timeout, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints)));
                         roadblock_leader("client-server-stop-tools", $default_rb_timeout, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints)));
+                        roadblock_leader("client-server-postprocess-tools", $pp_tools_timeout, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints)));
                     }
                     roadblock_leader("client-server-send-data", $default_rb_timeout, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints)));
                 }

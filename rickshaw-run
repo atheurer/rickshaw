@@ -32,13 +32,22 @@ use lib "$ENV{'TOOLBOX_HOME'}/perl";
 use toolbox::json;
 use toolbox::logging;
 use toolbox::run;
+use toolbox::registry;
 
 $toolbox::logging::debug = 0;
 
 my $ug = Data::UUID->new;
-my %defaults = ( "num-samples" => 1, "tool-group" => "default", "test-order" => "s",
-                 "base-run-dir" => tempdir(), "id" => $ug->create_str(),
-                 "max-sample-failures" => 1, "max-rb-attempts" => 1);
+my @defaults =  (
+                "num-samples",
+                "test-order",
+                "base-run-dir",
+                "max-sample-failures",
+                "max-rb-attempts",
+                "roadblock.timeout.default",
+                "roadblock.timeout.endpoint-deploy",
+                "roadblock.timeout.engine-start",
+                "roadblock.timeout.send-data",
+                );
 
 my @utilities = ( "packrat" );
 
@@ -52,10 +61,6 @@ my %run; # A multi-dimensional, nested hash, schema TBD
 my $redis_passwd = "flubber"; # TODO: make this cmdline setting
 my $rb_bin = "/usr/local/bin/roadblock.py";
 my $messages_ref;
-my $default_rb_timeout = 240;
-my $endpoint_deploy_timeout = 360;
-my $client_server_script_start_timeout = 720;
-my $endpoint_move_data_rb_timeout = 300;
 (my $hostname_cmd, my $hostname, my $hostname_rc) = run_cmd('hostname');
 chomp ($hostname);
 my $base_rb_leader_cmd = $rb_bin . " --role=leader --redis-server=localhost" .
@@ -102,7 +107,6 @@ my %clients_servers;
 my @rb_cs_ids; # unique IDs for roadblock
 my $abort_test_id;
 my $skip_registry_auth;
-
 
 sub usage {
     print "\nusage:\n\n";
@@ -160,7 +164,7 @@ sub roadblock_leader {
         my $rc = 99;
         my $file_rc;
         my $label = shift;
-        my $timeout = shift;
+        my $timeout = int shift;
         my $role = "leader";
         my $uuid = $run{'id'} . ":" . $label;
         # save $_[0] for by ref later to store json ref
@@ -891,7 +895,7 @@ sub run_tests {
         my $samp_id = $tests[$tid]{'sample-id'};
         my $iter_array_idx = $iter_id - 1;
         my $test_id = $iter_id . "-" . $samp_id;
-        my $timeout = $default_rb_timeout;
+        my $timeout = $run{'roadblock.timeout.default'};
         my $this_attempt_num = 1;
         my $sample_complete = 0;
         if (! defined $sample_failures[$iter_array_idx]) {
@@ -952,7 +956,7 @@ sub run_tests {
                                 "(%d total sample failures for this iteration)\n",
                                 $samp_id, $this_attempt_num - 1, $sample_failures[$iter_array_idx];
                         }
-                        $timeout = $default_rb_timeout;
+                        $timeout = $run{'roadblock.timeout.default'};
                         my %messages = %{ $messages_ref };
                         if ( $sync_point eq "client-start" and exists $messages{'received'} ) {
                             for my $message (@{ $messages{'received'} }) {
@@ -1039,10 +1043,22 @@ sub process_cmdline() {
         }
     }
     # Apply defaults
-    foreach my $p (keys %defaults) {
+    foreach my $p (@defaults) {
         if (! exists $run{$p}) {
-            debug_log(sprintf "applying default value [%s] for %s\n", $defaults{$p}, $p);
-            $run{$p} = $defaults{$p};
+            my $value = get_registry_val($p);
+            if ($value ne "undef") {
+                debug_log(sprintf "applying default value [%s] for %s\n", $value, $p);
+                $run{$p} = $value;
+            } else {
+                if ($p eq "base-run-dir") {
+                    $run{"base-run-dir"} = tempdir();
+                } elsif ($p eq "id") {
+                    $run{"id"} = $ug->create_str();
+                } else {
+                    printf "ERROR: registry key %s could not be found, exiting\n", $p;
+                    exit 1;
+                }
+            }
         }
     }
 }
@@ -1659,10 +1675,10 @@ sub deploy_endpoints() {
     # Deploy ths endpoints so they are ready to run benchmark and tools.
     # Each endpoint is responible for launching a osruntime for each client and server.
     print "Deploying endpoints\n";
-    $endpoint_deploy_timeout += scalar @endpoints * 120;
-    printf "endpoint-deploy-timeout adjusted to %d seconds\n", $endpoint_deploy_timeout;
-    $client_server_script_start_timeout += scalar @endpoints * 120;
-    printf "client-server-script-timeout adjusted to %d seconds\n", $endpoint_deploy_timeout;
+    $run{'roadblock.timeout.endpoint-deploy'} += scalar @endpoints * 120;
+    printf "endpoint-deploy-timeout adjusted to %d seconds\n", $run{'roadblock.timeout.endpoint-deploy'};
+    $run{'roadblock.timeout.engine-start'} += scalar @endpoints * 120;
+    printf "client-server-script-timeout adjusted to %d seconds\n", $run{'roadblock.timeout.endpoint-deploy'};
     debug_log(sprintf "\nendpoint output:\n");
     for (my $i = 0; $i < scalar @endpoints; $i++) {
         my $type = $endpoints[$i]{'type'};
@@ -1686,8 +1702,8 @@ sub deploy_endpoints() {
                     " --base-run-dir=" . $run{'base-run-dir'} .
                     " --max-sample-failures=" . $run{'max-sample-failures'} .
                     " --max-rb-attempts=" . $run{'max-rb-attempts'} .
-                    " --endpoint-deploy-timeout=" . $endpoint_deploy_timeout .
-                    " --client-server-script-start-timeout=" . $client_server_script_start_timeout .
+                    " --endpoint-deploy-timeout=" . $run{'roadblock.timeout.endpoint-deploy'} .
+                    " --client-server-script-start-timeout=" . $run{'roadblock.timeout.engine-start'} .
                     $endpoint_image_opt .
                     $endpoint_roadblock_opt .
                     " >" . $this_endpoint_run_dir . "/endpoint-stdout.txt" .
@@ -1722,7 +1738,7 @@ sub process_roadblocks() {
     # cleanup properly.  All roadblock particpants need the same conditional approach.
     # First confirm endpoints are deployed (all osruntimes have launched client-server-script)
     my @new_followers;
-    if (roadblock_leader("endpoint-deploy", $endpoint_deploy_timeout, $messages_ref, dump_endpoint_labels(\@endpoints)) == 0) {
+    if (roadblock_leader("endpoint-deploy", $run{'roadblock.timeout.endpoint-deploy'}, $messages_ref, dump_endpoint_labels(\@endpoints)) == 0) {
         # Endpoints may introduce new followers for remaining roadblocks.  These followers are typically osruntimes which
         # are only running tools.
         if (defined $messages_ref) {
@@ -1735,28 +1751,28 @@ sub process_roadblocks() {
             }
         }
         # Next step all client-servers through pre-test preparation
-        if (roadblock_leader("client-server-script-start", $client_server_script_start_timeout, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints))) == 0) {
-            if (roadblock_leader("client-server-get-data", $client_server_script_start_timeout, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints))) == 0) {
-                if (roadblock_leader("client-server-collect-sysinfo", $client_server_script_start_timeout, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints))) == 0) {
-                    if (roadblock_leader("client-server-start-tools", $default_rb_timeout, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints))) == 0) {
-                        if (roadblock_leader("client-server-start-tests", $default_rb_timeout, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints))) == 0) {
+        if (roadblock_leader("client-server-script-start", $run{'roadblock.timeout.engine-start'}, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints))) == 0) {
+            if (roadblock_leader("client-server-get-data", $run{'roadblock.timeout.engine-start'}, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints))) == 0) {
+                if (roadblock_leader("client-server-collect-sysinfo", $run{'roadblock.timeout.engine-start'}, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints))) == 0) {
+                    if (roadblock_leader("client-server-start-tools", $run{'roadblock.timeout.default'}, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints))) == 0) {
+                        if (roadblock_leader("client-server-start-tests", $run{'roadblock.timeout.default'}, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints))) == 0) {
                             # Now cycle through all tests
                             printf "Running tests:\n";
                             run_tests;
                         }
                         # Finally step through shutdown, cleanup, and sending data back
-                        roadblock_leader("client-server-stop-tests", $default_rb_timeout, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints)));
-                        roadblock_leader("client-server-stop-tools", $default_rb_timeout, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints)));
+                        roadblock_leader("client-server-stop-tests", $run{'roadblock.timeout.default'}, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints)));
+                        roadblock_leader("client-server-stop-tools", $run{'roadblock.timeout.default'}, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints)));
                     }
-                    roadblock_leader("client-server-send-data", $default_rb_timeout, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints)));
+                    roadblock_leader("client-server-send-data", $run{'roadblock.timeout.default'}, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints)));
                 }
             }
-            roadblock_leader("client-server-script-stop", $default_rb_timeout, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints)));
+            roadblock_leader("client-server-script-stop", $run{'roadblock.timeout.default'}, $messages_ref, (@rb_cs_ids, dump_endpoint_labels(\@endpoints)));
         }
         # Endpoints can now "un"-deploy, removing osruntimes
-        roadblock_leader("endpoint-move-data", $endpoint_move_data_rb_timeout, $messages_ref, dump_endpoint_labels(\@endpoints));
+        roadblock_leader("endpoint-move-data", $run{'roadblock.timeout.send-data'}, $messages_ref, dump_endpoint_labels(\@endpoints));
     }
-    roadblock_leader("endpoint-finish", $default_rb_timeout, $messages_ref, dump_endpoint_labels(\@endpoints));
+    roadblock_leader("endpoint-finish", $run{'roadblock.timeout.default'}, $messages_ref, dump_endpoint_labels(\@endpoints));
 }
 
 sub organize_run_data() {

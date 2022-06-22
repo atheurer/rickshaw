@@ -186,7 +186,7 @@ function archive_to_controller() {
 
 function process_opts() {
     longopts="rickshaw-host:,base-run-dir:,endpoint-run-dir:,cs-label:,roadblock-server:"
-    longopts+=",roadblock-passwd:,roadblock-id:,disable-tools:,endpoint:,osruntime:,max-sample-failures:"
+    longopts+=",roadblock-passwd:,roadblock-id:,tools:,endpoint:,osruntime:,max-sample-failures:"
     longopts+=",max-rb-attempts:,client-server-script-start-timeout:"
     opts=$(getopt -q -o "" --longoptions "$longopts" -n "getopt.sh" -- "$@");
     eval set -- "$opts";
@@ -232,9 +232,14 @@ function process_opts() {
                 roadblock_id="$1"
                 shift;
                 ;;
-            --disable-tools)
+            --tools)
                 shift;
-                disable_tools="$1"
+                tools="$1"
+                shift;
+                ;;
+            --tools-only)
+                shift;
+                tools_only="$1"
                 shift;
                 ;;
             --max-sample-failures)
@@ -436,8 +441,8 @@ function start_tools() {
     echo "running start_tools()"
 
     mkdir -p tool-data
-    if [ "$disable_tools" == "1" ]; then
-        echo "Not running tools because --disable-tools=1 was used"
+    if [ "$tools" == "none" ]; then
+        echo "Not running tools because --tools=none was used"
     else
         for this_tool_cmds in "$tool_start_cmds" "$tool_stop_cmds"; do
             if [ ! -e $this_tool_cmds ]; then
@@ -448,15 +453,27 @@ function start_tools() {
         if pushd tool-data >/dev/null; then
             while read -u 9 line; do
                 tool_name=`echo $line | awk -F: '{print $1}'`
-                tool_cmd=`echo $line | sed -e s/^$tool_name://`
-                /bin/mkdir -p $tool_name
-                if pushd $tool_name >/dev/null; then
-                    echo "Starting tool '${tool_name}' with command '${tool_cmd}'"
-                    eval $tool_cmd
-
-                    popd >/dev/null
+                use_tool="n"
+                if [ "$tools" == "all" ]; then
+                    use_tool="y"
                 else
-                    abort_error "start_tools: Failed to pushd to ${tool_name}" $sync $leader
+                    for this_tool in `echo $tools | sed -e 's/,/ /g'`; do
+                        if [ "$this_tool" == "$tool_name" ]; then
+                            use_tool="y"
+                            break
+                        fi
+                    done
+                fi
+                if [ "$use_tool" == "y" ]; then
+                    tool_cmd=`echo $line | sed -e s/^$tool_name://`
+                    /bin/mkdir -p $tool_name
+                    if pushd $tool_name >/dev/null; then
+                        echo "Starting tool '${tool_name}' with command '${tool_cmd}'"
+                        eval $tool_cmd
+                        popd >/dev/null
+                    else
+                        abort_error "start_tools: Failed to pushd to ${tool_name}" $sync $leader
+                    fi
                 fi
             done 9<"$tool_start_cmds"
 
@@ -610,7 +627,7 @@ function run_bench_cmd() {
     cmd="${1}"; shift
     ret_val=0
 
-    if [ "${cs_type}" == "${matching_cs_type}" ]; then
+    if [ "$tools_only" == "0" -a "${cs_type}" == "${matching_cs_type}" ]; then
         if [ "${force_cmd}" == "1" ] || [ "${abort_status}" == "0" -a "${quit_status}" == "0" ]; then
             if [ ! -z "${cmd}" ]; then
                 echo "Running ${cmd_type} command: ${cmd}"
@@ -665,7 +682,7 @@ function process_bench_roadblocks() {
         abort_error "bench-start-cmds not found" $sync $leader
     fi
 
-    if [ "$cs_type" == "client" ]; then
+    if [ "$cs_type" == "client" -a "$tools_only" == "0" ]; then
         # Only the clients need a runtime and infra cmd
 
         count=0
@@ -693,7 +710,7 @@ function process_bench_roadblocks() {
         else
             echo "There are no bench infra cmds to load"
         fi
-    elif [ "$cs_type" == "server" ]; then
+    elif [ "$cs_type" == "server" -a "$tools_only" == "0" ]; then
         # Only the server needs a cmd to stop
         # Clients run until the benchmark-client
         # program finishes
@@ -1009,20 +1026,32 @@ function process_bench_roadblocks() {
 function stop_tools() {
     echo "running stop_tools()"
 
-    if [ "$disable_tools" == "1" ]; then
-        echo "Not running tools because --disable-tools=1 was used"
+    if [ "$tools" == "none" ]; then
+        echo "Not stopping tools because --tools=none was used"
     else
         if pushd tool-data >/dev/null; then
             while read -u 9 line; do
                 tool_name=`echo $line | awk -F: '{print $1}'`
-                tool_cmd=`echo $line | sed -e s/^$tool_name://`
-                if pushd $tool_name >/dev/null; then
-                    echo "Stopping tool '${tool_name}' with command '${tool_cmd}'"
-                    eval $tool_cmd
-
-                    popd >/dev/null
+                use_tool="n"
+                if [ "$tools" == "all" ]; then
+                    use_tool="y"
                 else
-                    abort_error "stop_tools: Failed to pushd to ${tool_name}" $sync $leader
+                    for this_tool in `echo $tools | sed -e 's/,/ /g'`; do
+                        if  [ "$this_tool" == "$tool_name" ]; then
+                            use_tool="y"
+                            break
+                        fi
+                    done
+                fi
+                if [ "$use_tool" == "y" ]; then
+                    tool_cmd=`echo $line | sed -e s/^$tool_name://`
+                    if pushd $tool_name >/dev/null; then
+                        echo "Stopping tool '${tool_name}' with command '${tool_cmd}'"
+                        eval $tool_cmd
+                        popd >/dev/null
+                    else
+                        abort_error "stop_tools: Failed to pushd to ${tool_name}" $sync $leader
+                    fi
                 fi
             done 9<"$tool_stop_cmds"
 

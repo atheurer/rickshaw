@@ -74,7 +74,7 @@ echo "bootstrap params:"
 echo "$@"
 echo
 longopts="rickshaw-host:,base-run-dir:,endpoint-run-dir:,cs-label:,roadblock-server:"
-longopts+=",roadblock-passwd:,roadblock-id:,disable-tools:,osruntime:,endpoint:,max-sample-failures:"
+longopts+=",roadblock-passwd:,roadblock-id:,tools:,osruntime:,endpoint:,max-sample-failures:"
 longopts+=",cpu-partitioning:,max-rb-attempts:,client-server-script-start-timeout:"
 opts=$(getopt -q -o "" --longoptions "$longopts" -n "getopt.sh" -- "$@");
 eval set -- "$opts";
@@ -130,9 +130,9 @@ while true; do
             export roadblock_id="$1"
             shift;
             ;;
-        --disable-tools)
+        --tools)
             shift;
-            export disable_tools="$1"
+            export tools="$1"
             shift;
             ;;
         --max-sample-failures)

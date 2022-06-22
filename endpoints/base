@@ -17,7 +17,8 @@ cs_rb_opts=""
 do_validate="0"
 num_clients=0
 num_servers=0
-disable_tools=0
+tools="all" # none = do not run any tools, $tool = only run $tool
+tools_only="0" # 1 = only run tools, no benchmarks
 abort=0
 max_sample_failures=""
 export ssh_opts="-q -o StrictHostKeyChecking=no -o PasswordAuthentication=no"

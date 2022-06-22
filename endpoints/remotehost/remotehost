@@ -245,8 +245,11 @@ function process_remotehost_opts() {
                     exit_error "Could not properly decode cpu-partitioning for '$val'"
                 fi
                 ;;
-            disable-tools)
-                disable_tools="$val"
+            tools)
+                tools="$val"
+                ;;
+            tools-only)
+                tools_only="$val"
                 ;;
             image-cache-size)
                 image_cache_size=$val
@@ -373,10 +376,12 @@ function launch_osruntime() {
         if [ $count -gt 1 ]; then
             # Only the first client/server needs to run tools
             echo "Skipping tools execution on $this_cs_label because a previous client/server is running tools on this host"
-            this_disable_tools="1"
+            this_tools_opt="none"
         else
-            this_disable_tools="$disable_tools"
+            this_tools_opt="$tools"
         fi
+
+        this_tools_only=$tools_only
 
         if [ "$osruntime" == "chroot" ]; then
             echo "using chroot"
@@ -393,7 +398,8 @@ function launch_osruntime() {
             base_cmd+=" --max-rb-attempts=$max_rb_attempts"
             base_cmd+=" --cpu-partitioning=$cpu_partitioning"
             base_cmd+=" --client-server-script-start-timeout=$client_server_script_start_timeout"
-            base_cmd+=" --disable-tools=$this_disable_tools"
+            base_cmd+=" --tools=$this_tools_opt"
+            base_cmd+=" --tools-only=$this_tools_only"
             if [ $numa_node -gt -1 ]; then
                 base_cmd="numactl -N $numa_node -m $numa_node $base_cmd"
             fi
@@ -417,7 +423,8 @@ function launch_osruntime() {
             echo "max_sample_failures=$max_sample_failures" >> ${endpoint_run_dir}/${env_file}
             echo "max_rb_attempts=$max_rb_attempts"         >> ${endpoint_run_dir}/${env_file}
             echo "ssh_id=${ssh_id}"                         >> ${endpoint_run_dir}/${env_file}
-            echo "disable_tools=$this_disable_tools"        >> ${endpoint_run_dir}/${env_file}
+            echo "tools=$this_tools_opt"                    >> ${endpoint_run_dir}/${env_file}
+            echo "tools_only=$this_tools_only"              >> ${endpoint_run_dir}/${env_file}
 
             for cs_rb_opt in $cs_rb_opts; do
                 arg=$(echo $cs_rb_opt | awk -F'=' '{print $1}')

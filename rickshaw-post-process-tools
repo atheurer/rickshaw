@@ -178,7 +178,7 @@ if (opendir(TOOLDIR, $run_dir . "/" . $tool_dir)) {
                 my $num_dir = $collector_dir . "/" . $num; # $run_dir/tool-data/[client|server|worker|master]/[0-N]
                 if (opendir(NUMDIR, $run_dir . "/" . $num_dir)) {
                     my @tools = grep(/\w+/, readdir(NUMDIR));
-                    printf "Working on tool dir %s\n", $num_dir;
+                    debug_log(sprintf "Working on tool dir %s\n", $num_dir);
                     for my $tool (@tools) {
                         if (! exists($tools_config{$tool})) {
                             # Load a tool configuration for every tool the user is asking for

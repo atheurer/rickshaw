@@ -71,6 +71,7 @@ function exit_error() {
     local msg
     msg="$1"
     echo "[ERROR] ${msg}" 1>&2
+    echo "[ERROR] ${msg}"
     exit 1
 }
 

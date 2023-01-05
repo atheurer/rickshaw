@@ -511,12 +511,12 @@ sub wait_for_docs {
             }
             my $found = indexed_doc_count($doctype);
             my $submitted = $num_docs_submitted{$doctype};
-            printf "  %s: %d submitted, %d found", $doctype, $submitted, $found;
+            debug_log(sprintf "  %s: %d submitted, %d found", $doctype, $submitted, $found);
             if ($submitted == $found) {
-                print ", complete";
+                debug_log(sprintf ", complete");
                 @doctypes = grep(!/^$doctype?/, @doctypes);
             }
-            print "\n";
+            debug_log(sprintf "\n");
             if ($found > $submitted) {
                 printf "ERROR: should not have more found than submitted, exiting\n";
                 exit 1;
@@ -625,7 +625,7 @@ if (ref $idx_resp_ref eq ref [] ) {
         foreach my $req_name ("run", "iteration", "tag", "param", "sample", "period", "metric_desc", "metric_data") {
             my $complete_index_name = "cdm" . $latest_ver . "-" . $req_name;
             if (grep(/^$complete_index_name$/, @fullnames)) {
-                printf "Found index %s\n", $req_name;
+                debug_log(sprintf "Found index %s\n", $req_name);
             } else {
                 printf "Could not find index [%s] in Elastic\n", $complete_index_name;
                 printf "The following indices are present:\n";
@@ -700,7 +700,7 @@ if (-e $tool_dir and $index_tools == 1) {
                                 
 
                                     $tool_file =~ s/(metric-data-\S+)\.json.*/$1/;
-                                    printf "Working on tool_file: %s\n", $tool_file;
+                                    debug_log(sprintf "Working on tool_file: %s\n", $tool_file);
 
                                     my %job_args = ( 'tool-file' => $tool_dir . "/" . $tool_file,
                                                      'collector' => $collector,

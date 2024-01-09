@@ -59,6 +59,7 @@ unique_project="0"
 hostNetwork="0"
 hugepage="0"
 osruntime[default]="pod"
+userenv[default]="stream9"
 runtimeClassName=""
 masters_tool_collect="1"
 workers_tool_collect="1"
@@ -437,9 +438,6 @@ function process_k8s_opts() {
                 ;;
             user)
                 user=$val
-                ;;
-            userenv)
-                userenv=$val
                 ;;
             hugepage)
                 hugepage=$val

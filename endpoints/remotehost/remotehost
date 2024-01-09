@@ -45,6 +45,7 @@ chroot_rbind_mounts="proc dev sys lib/firmware lib/modules usr/src boot var/run"
 endpoint_name="remotehost"
 image_cache_size=3
 osruntime[default]="chroot"
+userenv[default]="stream9"
 host_mounts=""
 hypervisor_host="none" # Default is no hypervisor
 
@@ -62,7 +63,8 @@ function endpoint_remotehost_engine_init() {
         echo '"endpoint_label": "'$endpoint_label'",' >>$msg_file
         echo '"hosted_by": "'$host'",' >>$msg_file
         echo '"hypervisor_host": "'$hypervisor_host'",' >>$msg_file
-        echo '"userenv": "'$userenv'",' >>$msg_file
+        set_osruntime_numanode_cpupart_userenv $this_cs_label
+        echo '"userenv": "'$user_env'",' >>$msg_file
         echo '"osruntime": "'$os_runtime'"' >>$msg_file
         echo '}}}' >>$msg_file
 
@@ -161,7 +163,7 @@ function cleanup_osruntime() {
     echo
 
     for this_cs_label in ${clients[@]} ${servers[@]} ${collectors[@]}; do
-        set_osruntime_numanode_cpupart ${this_cs_label}
+        set_osruntime_numanode_cpupart_userenv ${this_cs_label}
 
         if [ "${os_runtime}" == "chroot" ]; then
             data_file=${endpoint_run_dir}/chroot-container-mount.txt
@@ -223,9 +225,6 @@ function process_remotehost_opts() {
         case "$arg" in
             client|server|clients|servers|profiler)
                 addto_clients_servers "$arg" "$val"
-                ;;
-            userenv)
-                userenv=$val
                 ;;
             host)
                 host=$val
@@ -310,7 +309,7 @@ function launch_osruntime() {
         this_cs_type=`echo $this_cs_label | awk -F- '{print $1}'`
         this_cs_id=`echo $this_cs_label | awk -F- '{print $2}'`
         get_image $this_cs_type $this_cs_id this_image
-        set_osruntime_numanode_cpupart $this_cs_label
+        set_osruntime_numanode_cpupart_userenv $this_cs_label
 
         container_name="${endpoint_label}_${run_id}_${this_cs_label}_${os_runtime}"
         existing_container=`do_ssh $user@$host podman ps --all --format "{{.Names}}" | grep ^$container_name$`

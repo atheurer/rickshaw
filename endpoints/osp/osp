@@ -130,9 +130,6 @@ function process_osp_opts() {
             vm-image)
                 vm_image=$val
                 ;;
-            userenv)
-                userenv=$val
-                ;;
             flavor)
                 flavor="$val"
                 # flavor is per engine:
